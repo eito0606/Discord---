@@ -1,0 +1,20 @@
+[
+    {
+        "name": "アニメイトタイムズ",
+        "url": "https://www.animatetimes.com/rss/",
+        "category": "声優総合",
+        "emoji": "🎙️"
+    },
+    {
+        "name": "超！アニメディア",
+        "url": "https://cho-animedia.jp/feed/",
+        "category": "声優総合",
+        "emoji": "📺"
+    },
+    {
+        "name": "声優グランプリ",
+        "url": "https://seigura.com/feed/",
+        "category": "声優専門",
+        "emoji": "🏆"
+    }
+]
