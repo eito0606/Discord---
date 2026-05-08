@@ -1,75 +1,57 @@
-// handlers/voipoke/weekly-report.js — ぼいラボ Discord 週次レポート自動投稿
+// handlers/voipoke/weekly-report.js — ぼいラボ × 全ツール 週次レポート
 //
-// M-5: ぼいラボ Discord 自動招待化
+// M-5 フェーズ B 完全版：
+//   ① Discord 経路別入室数（discord_invitations）
+//   ② アクティブ率（user_participation, 直近7日）
+//   ③ 今週の注目 TOP3（user_participation の投稿数最多）
+//   ④ サイト・アプリ KPI（GA4 Data API → voilab-lp / voipoke-lp / voifolio / VoiPoke iOS）
+//   ⑤ 先週比（必要に応じて拡張）
 //
-// 役割:
-//   毎週月曜 9:00 JST に Supabase の discord_invitations テーブルを集計して
-//   #運営ログ チャンネルに Embed で投稿する。
-//   経路別の入室数 + 累計 + 注目ユーザー TOP3 を可視化。
-//
-// 仕様参照: /Users/hidehisa/【監督】/specs/M-5-community-design-2026-05-07.md E セクション
+// 起動：cron.js から毎週月曜 9:00 JST に呼び出される。
+// 投稿先：OPS_LOG_CHANNEL_ID（#運営ログ）。
 
 const { EmbedBuilder } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
+const {
+    getActiveUserIdsSince,
+    getTopParticipantsSince,
+    countParticipationSince,
+} = require('../../db');
+const { fetchAllServicesSummary } = require('./ga4-client');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Supabase クライアント（service role）。env 未設定時は null（後段で警告ログのみ）
 const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
     ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     : null;
 
-const SOURCE_LABELS = {
-    'voilab-lp': 'voilab-lp',
-    'voipoke-lp': 'voipoke-lp',
-    'diagnosis': 'diagnosis',
-    'organic': 'organic',
-};
+const SOURCES = ['voilab-lp', 'voipoke-lp', 'diagnosis', 'organic'];
 
-/**
- * 集計クエリ：直近 7 日と全期間の入室数を経路別にカウント
- * @returns {Promise<{thisWeek: object, total: object, joinedThisWeek: number, totalJoined: number}>}
- */
-async function aggregateInvitations() {
-    if (!supabase) {
-        return {
-            thisWeek: { 'voilab-lp': 0, 'voipoke-lp': 0, 'diagnosis': 0, 'organic': 0 },
-            total: { 'voilab-lp': 0, 'voipoke-lp': 0, 'diagnosis': 0, 'organic': 0 },
-            joinedThisWeek: 0,
-            totalJoined: 0,
-        };
-    }
+// ════════════════════════════════════════════════
+// ① Discord 経路別入室数
+// ════════════════════════════════════════════════
+async function aggregateDiscordInvitations() {
+    const empty = { thisWeek: zeroSources(), total: zeroSources(), joinedThisWeek: 0, totalJoined: 0 };
+    if (!supabase) return empty;
 
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    // 直近 7 日
-    const { data: weekRows, error: weekErr } = await supabase
-        .from('discord_invitations')
-        .select('source, joined_at')
-        .gte('joined_at', weekAgo.toISOString());
-
-    // 全期間
-    const { data: totalRows, error: totalErr } = await supabase
-        .from('discord_invitations')
-        .select('source, joined_at');
+    const [{ data: weekRows, error: weekErr }, { data: totalRows, error: totalErr }] = await Promise.all([
+        supabase.from('discord_invitations').select('source, joined_at').gte('joined_at', weekAgo.toISOString()),
+        supabase.from('discord_invitations').select('source, joined_at'),
+    ]);
 
     if (weekErr || totalErr) {
         console.error('[weekly-report] supabase error:', weekErr || totalErr);
-        return {
-            thisWeek: { 'voilab-lp': 0, 'voipoke-lp': 0, 'diagnosis': 0, 'organic': 0 },
-            total: { 'voilab-lp': 0, 'voipoke-lp': 0, 'diagnosis': 0, 'organic': 0 },
-            joinedThisWeek: 0,
-            totalJoined: 0,
-        };
+        return empty;
     }
 
     const tally = (rows) => {
-        const counts = { 'voilab-lp': 0, 'voipoke-lp': 0, 'diagnosis': 0, 'organic': 0 };
+        const counts = zeroSources();
         for (const r of rows || []) {
-            if (!r.joined_at) continue; // 招待発行のみで未入室は除外
-            const key = SOURCE_LABELS[r.source] || 'organic';
+            if (!r.joined_at) continue;
+            const key = SOURCES.includes(r.source) ? r.source : 'organic';
             counts[key] = (counts[key] || 0) + 1;
         }
         return counts;
@@ -77,16 +59,48 @@ async function aggregateInvitations() {
 
     const thisWeek = tally(weekRows);
     const total = tally(totalRows);
-    const joinedThisWeek = Object.values(thisWeek).reduce((a, b) => a + b, 0);
-    const totalJoined = Object.values(total).reduce((a, b) => a + b, 0);
-
-    return { thisWeek, total, joinedThisWeek, totalJoined };
+    return {
+        thisWeek,
+        total,
+        joinedThisWeek: sumValues(thisWeek),
+        totalJoined: sumValues(total),
+    };
 }
 
-/**
- * 週次レポートを #運営ログ に投稿する
- * @param {Client} client - discord.js Client
- */
+// ════════════════════════════════════════════════
+// ② アクティブ率（直近 7 日）
+// ════════════════════════════════════════════════
+function aggregateActivity() {
+    const activeIds = getActiveUserIdsSince(7);
+    const totalPosts = countParticipationSince(7);
+    return {
+        activeUserCount: activeIds.length,
+        totalPosts,
+    };
+}
+
+// ════════════════════════════════════════════════
+// ③ 今週の注目 TOP3
+// ════════════════════════════════════════════════
+function aggregateTopUsers() {
+    return getTopParticipantsSince(7, 3); // [{ user_id, cnt }, ...]
+}
+
+// ════════════════════════════════════════════════
+// ④ サイト・アプリ KPI（GA4）
+// ════════════════════════════════════════════════
+async function aggregateAnalytics() {
+    try {
+        return await fetchAllServicesSummary(7);
+    } catch (err) {
+        console.error('[weekly-report] GA4 fetch failed:', err);
+        return {};
+    }
+}
+
+// ════════════════════════════════════════════════
+// 投稿
+// ════════════════════════════════════════════════
 async function postWeeklyReport(client) {
     const channelId = process.env.OPS_LOG_CHANNEL_ID;
     if (!channelId) {
@@ -106,29 +120,73 @@ async function postWeeklyReport(client) {
         return;
     }
 
-    const { thisWeek, total, joinedThisWeek, totalJoined } = await aggregateInvitations();
+    // 4 ブロックを並列取得（GA4 が遅いので並列が効く）
+    const [invites, analytics] = await Promise.all([
+        aggregateDiscordInvitations(),
+        aggregateAnalytics(),
+    ]);
+    const activity = aggregateActivity();
+    const topUsers = aggregateTopUsers();
 
+    // ──── Embed 組み立て ────
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const fmt = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
-    const periodLabel = `${fmt(weekAgo)}(月) 〜 ${fmt(now)}(日)`;
-
-    const sourceField = [
-        `voilab-lp       ${thisWeek['voilab-lp']} 人`,
-        `voipoke-lp      ${thisWeek['voipoke-lp']} 人`,
-        `diagnosis       ${thisWeek['diagnosis']} 人`,
-        `organic         ${thisWeek['organic']} 人`,
-    ].join('\n');
+    const period = `${fmt(weekAgo)}(月) 〜 ${fmt(now)}(日)`;
 
     const embed = new EmbedBuilder()
         .setColor(0x27AE60)
-        .setTitle(`ぼいラボ 週次レポート ${periodLabel}`)
-        .setDescription(`今週 +${joinedThisWeek} 人（累計 ${totalJoined} 人）`)
-        .addFields(
-            { name: '経路別内訳', value: '```' + sourceField + '```', inline: false },
-        )
+        .setTitle(`ぼいラボ × 全ツール 週次レポート`)
+        .setDescription(`期間: **${period}**`)
         .setFooter({ text: 'M-5 自動集計（毎週月曜 9:00）' })
         .setTimestamp(now);
+
+    // ① Discord
+    const inviteField = [
+        `今週 +${invites.joinedThisWeek} 人（累計 ${invites.totalJoined} 人）`,
+        '```',
+        `voilab-lp     ${invites.thisWeek['voilab-lp']} 人`,
+        `voipoke-lp    ${invites.thisWeek['voipoke-lp']} 人`,
+        `diagnosis     ${invites.thisWeek['diagnosis']} 人`,
+        `organic       ${invites.thisWeek['organic']} 人`,
+        '```',
+    ].join('\n');
+    embed.addFields({ name: '📥 Discord 入室', value: inviteField, inline: false });
+
+    // ② アクティブ
+    embed.addFields({
+        name: '🔥 投稿アクティビティ（直近7日）',
+        value: `アクティブユーザー: **${activity.activeUserCount} 人**\n総投稿数: **${activity.totalPosts} 件**`,
+        inline: false,
+    });
+
+    // ③ TOP3
+    const topField = topUsers.length === 0
+        ? '（投稿なし）'
+        : topUsers.map((u, i) => `${i + 1}. <@${u.user_id}> — ${u.cnt} 投稿`).join('\n');
+    embed.addFields({ name: '🏆 今週の注目', value: topField, inline: false });
+
+    // ④ サイト KPI
+    const services = [
+        { key: 'voifolio', label: 'ぼいフォリオ' },
+        { key: 'voilab-lp', label: 'voilab-lp' },
+        { key: 'voipoke-lp', label: 'voipoke-lp' },
+        { key: 'voipoke-ios', label: 'VoiPoke iOS' },
+    ];
+    const lines = [];
+    for (const s of services) {
+        const m = analytics[s.key];
+        if (!m) {
+            lines.push(`${s.label.padEnd(14)} （未計測）`);
+        } else {
+            lines.push(`${s.label.padEnd(14)} PV ${m.pageviews} / UU ${m.users}`);
+        }
+    }
+    embed.addFields({
+        name: '🌐 サイト・アプリ KPI（直近7日）',
+        value: '```' + lines.join('\n') + '```',
+        inline: false,
+    });
 
     try {
         await channel.send({ embeds: [embed] });
@@ -138,7 +196,20 @@ async function postWeeklyReport(client) {
     }
 }
 
+// ════════════════════════════════════════════════
+// helpers
+// ════════════════════════════════════════════════
+function zeroSources() {
+    return { 'voilab-lp': 0, 'voipoke-lp': 0, 'diagnosis': 0, 'organic': 0 };
+}
+function sumValues(obj) {
+    return Object.values(obj).reduce((a, b) => a + (b || 0), 0);
+}
+
 module.exports = {
     postWeeklyReport,
-    aggregateInvitations, // テスト用
+    aggregateDiscordInvitations,
+    aggregateActivity,
+    aggregateTopUsers,
+    aggregateAnalytics,
 };

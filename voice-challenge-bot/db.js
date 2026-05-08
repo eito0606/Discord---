@@ -464,6 +464,46 @@ function countParticipationByUser(userId) {
   return row.cnt || 0;
 }
 
+// --- M-5 週次レポート用：投稿活動の週次集計 ---
+
+// 直近 N 日にユニークで投稿したユーザー ID 一覧
+// 用途: 全体アクティブ率分母（直近の入室者）と分子（投稿した人）を計算
+function getActiveUserIdsSince(daysBack = 7) {
+  const cutoff = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10); // YYYY-MM-DD
+  const rows = db.prepare(`
+    SELECT DISTINCT user_id FROM user_participation
+    WHERE participated_date >= ?
+  `).all(cutoff);
+  return rows.map(r => r.user_id);
+}
+
+// 直近 N 日の投稿数 TOP K（user_id, count）
+// 用途: 「今週の注目」TOP3 表示
+function getTopParticipantsSince(daysBack = 7, limit = 3) {
+  const cutoff = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  return db.prepare(`
+    SELECT user_id, COUNT(*) AS cnt
+    FROM user_participation
+    WHERE participated_date >= ?
+    GROUP BY user_id
+    ORDER BY cnt DESC
+    LIMIT ?
+  `).all(cutoff, limit);
+}
+
+// 直近 N 日の総投稿数（チャンネル別合計）
+function countParticipationSince(daysBack = 7) {
+  const cutoff = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const row = db.prepare(`
+    SELECT COUNT(*) AS cnt FROM user_participation
+    WHERE participated_date >= ?
+  `).get(cutoff);
+  return row.cnt || 0;
+}
+
 // --- アンケート機能: クールダウン（連続回答防止）関連 ---
 
 // ユーザーが7日以内にアンケートに回答済みかどうかを確認する関数
@@ -854,4 +894,8 @@ module.exports = {
   countSuggestionsReceivedByUser,
   getStreakForUser,
   countParticipationByUser,
+  // --- M-5 週次レポート ---
+  getActiveUserIdsSince,
+  getTopParticipantsSince,
+  countParticipationSince,
 };
