@@ -4,6 +4,7 @@
 const { db } = require('../db');
 const { checkAndGrantRole } = require('./roleManager');
 const { sendAutoReply } = require('./autoReply');
+const { tryGrantDailyTicket } = require('./voipoke/grant-login-ticket');
 
 // 許可する音声ファイルの拡張子（これ以外のファイルや動画は無視する）
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.ogg', '.webm'];
@@ -119,6 +120,12 @@ async function handleAudioSubmission(message) {
     // 7. ロール付与の条件（3日目、7日目など）を満たしているかチェックする
     // → ここで先ほど作った checkAndGrantRole 関数を呼び出す
     await checkAndGrantRole(message, newCurrentStreak);
+
+    // 8. ぼいフォリオ ログインボーナス（fire-and-forget、メッセージ処理をブロックしない）
+    // 今日初投稿のときだけ動く（recordDailyLoginAttempt が冪等）。
+    // 連携済みユーザーには 🎫 react + 連続日数 reply、未連携ユーザーには初回 DM 案内のみ。
+    tryGrantDailyTicket(message, userId, todayStr, newCurrentStreak)
+        .catch(err => console.error('[participation] tryGrantDailyTicket error:', err));
 }
 
 module.exports = {
