@@ -56,28 +56,30 @@ E. Firebase サービスアカウント鍵 → 1 個の JSON
 
 ---
 
-## B. Discord ロール 14 個作成（所要 30 分）
+## B. Discord ロール 13 個作成（所要 25 分）
 
-ぼいラボのサーバー設定 → **ロール** から 14 個作成。**下から順に作ると並び順が綺麗**。
+ぼいラボのサーバー設定 → **ロール** から 13 個作成。**下から順に作ると並び順が綺麗**。
+
+⚠️「VoiPoke 先行登録済」は **既存の `アーリーアクセス` ロールと統合**しました。新規作成不要。`EARLY_ACCESS_ROLE_ID` をそのまま流用します。
 
 | # | ロール名 | 表示色 | 環境変数名 |
 |---|---|---|---|
 | 1 | `声活ユーザー` | 緑 `#27AE60` | `DISCORD_ROLE_VOICEUSER` |
 | 2 | `声優志望` | 鮮緑 `#2ECC71` | `DISCORD_ROLE_VOISEIYU_KIBOU` |
 | 3 | `診断完了` | 青緑 `#16A085` | `DISCORD_ROLE_DIAGNOSED` |
-| 4 | `VoiPoke 先行登録済` | ターコイズ `#1ABC9C` | `DISCORD_ROLE_PRE_VOIPOKE` |
-| 5 | `黄金タイプ` | 黄金 `#C9A961` | `DISCORD_ROLE_TYPE_KOGANE` |
-| 6 | `常磐タイプ` | 深緑 `#0F4C3A` | `DISCORD_ROLE_TYPE_TOKIWA` |
-| 7 | `水タイプ` | 水色 `#7DC4D9` | `DISCORD_ROLE_TYPE_MIZU` |
-| 8 | `牡丹タイプ` | 牡丹 `#C25A6E` | `DISCORD_ROLE_TYPE_BOTAN` |
-| 9 | `躑躅タイプ` | 躑躅 `#E07AA0` | `DISCORD_ROLE_TYPE_TSUTSUJI` |
-| 10 | `菫タイプ` | 菫 `#7960B5` | `DISCORD_ROLE_TYPE_SUMIRE` |
-| 11 | `臙脂タイプ` | 臙脂 `#9C2E3F` | `DISCORD_ROLE_TYPE_ENJI` |
-| 12 | `浅葱タイプ` | 浅葱 `#3FA9A0` | `DISCORD_ROLE_TYPE_ASAGI` |
-| 13 | `潤みタイプ` | 灰青 `#8C8AA1` | `DISCORD_ROLE_TYPE_URUMI` |
-| 14 | `銀茶タイプ` | 銀茶 `#A89578` | `DISCORD_ROLE_TYPE_GINCHA` |
+| 4 | `黄金タイプ` | 黄金 `#C9A961` | `DISCORD_ROLE_COLOR_KOGANE` |
+| 5 | `常磐タイプ` | 深緑 `#0F4C3A` | `DISCORD_ROLE_COLOR_TOKIWA` |
+| 6 | `水タイプ` | 水色 `#7DC4D9` | `DISCORD_ROLE_COLOR_MIZU` |
+| 7 | `牡丹タイプ` | 牡丹 `#C25A6E` | `DISCORD_ROLE_COLOR_BOTAN` |
+| 8 | `躑躅タイプ` | 躑躅 `#E07AA0` | `DISCORD_ROLE_COLOR_TSUTSUJI` |
+| 9 | `菫タイプ` | 菫 `#7960B5` | `DISCORD_ROLE_COLOR_SUMIRE` |
+| 10 | `臙脂タイプ` | 臙脂 `#9C2E3F` | `DISCORD_ROLE_COLOR_ENJI` |
+| 11 | `浅葱タイプ` | 浅葱 `#3FA9A0` | `DISCORD_ROLE_COLOR_ASAGI` |
+| 12 | `潤みタイプ` | 灰青 `#8C8AA1` | `DISCORD_ROLE_COLOR_URUMI` |
+| 13 | `銀茶タイプ` | 銀茶 `#A89578` | `DISCORD_ROLE_COLOR_GINCHA` |
 
-各ロールを作ったら、**ロール名を右クリック → 「ロール ID をコピー」** で 14 個ID を取得。
+各ロールを作ったら、**ロール名を右クリック → 「ロール ID をコピー」** で 13 個ID を取得。
+さらに既存の **アーリーアクセス** ロールの ID も取得（統合用）→ `EARLY_ACCESS_ROLE_ID`
 
 ---
 
@@ -87,7 +89,7 @@ E. Firebase サービスアカウント鍵 → 1 個の JSON
 1. ぼいラボで **「+」** チャンネル作成 → 名前: `voipoke-先行メンバー`
 2. カテゴリ: ツール系（既存に合わせて）
 3. 権限編集 → **@everyone**：「チャンネルを見る」OFF
-4. 権限追加 → **VoiPoke 先行登録済**：「チャンネルを見る」「メッセージ送信」ON
+4. 権限追加 → **アーリーアクセス**ロール（既存）：「チャンネルを見る」「メッセージ送信」ON
 5. 同様 → **master**（既存）：「チャンネルを見る」「メッセージ送信」ON
 6. チャンネル名を **右クリック → 「チャンネル ID をコピー」**：`VOIPOKE_EARLY_MEMBER_CHANNEL_ID`
 
@@ -193,21 +195,21 @@ DISCORD_INVITE_BOT_CLIENT_SECRET=
 DISCORD_INVITE_BOT_TOKEN=
 VOILAB_GUILD_ID=
 
-# B. Discord ロール 14 個
+# B. Discord ロール 13 個 + 既存アーリーアクセスID
 DISCORD_ROLE_VOICEUSER=
 DISCORD_ROLE_VOISEIYU_KIBOU=
 DISCORD_ROLE_DIAGNOSED=
-DISCORD_ROLE_PRE_VOIPOKE=
-DISCORD_ROLE_TYPE_KOGANE=
-DISCORD_ROLE_TYPE_TOKIWA=
-DISCORD_ROLE_TYPE_MIZU=
-DISCORD_ROLE_TYPE_BOTAN=
-DISCORD_ROLE_TYPE_TSUTSUJI=
-DISCORD_ROLE_TYPE_SUMIRE=
-DISCORD_ROLE_TYPE_ENJI=
-DISCORD_ROLE_TYPE_ASAGI=
-DISCORD_ROLE_TYPE_URUMI=
-DISCORD_ROLE_TYPE_GINCHA=
+EARLY_ACCESS_ROLE_ID=            # 既存「アーリーアクセス」ロールのID（VoiPoke先行と統合）
+DISCORD_ROLE_COLOR_KOGANE=
+DISCORD_ROLE_COLOR_TOKIWA=
+DISCORD_ROLE_COLOR_MIZU=
+DISCORD_ROLE_COLOR_BOTAN=
+DISCORD_ROLE_COLOR_TSUTSUJI=
+DISCORD_ROLE_COLOR_SUMIRE=
+DISCORD_ROLE_COLOR_ENJI=
+DISCORD_ROLE_COLOR_ASAGI=
+DISCORD_ROLE_COLOR_URUMI=
+DISCORD_ROLE_COLOR_GINCHA=
 
 # C. Discord チャンネル 2 個
 VOIPOKE_EARLY_MEMBER_CHANNEL_ID=
@@ -258,7 +260,7 @@ GOOGLE_APPLICATION_CREDENTIALS_JSON=  # ここに 1 行 JSON を貼る
 
 ```
 A. Discord Bot 作成        → 5 値
-B. ロール 14 個作成        → 14 値
+B. ロール 13 個作成 + 既存アーリーアクセスID → 14 値
 C. チャンネル 2 個作成     → 2 値
 D. GA4 プロパティ 4 個     → 4 + 3 値
 E. Firebase 鍵            → 1 JSON
