@@ -101,12 +101,29 @@ const {
   handleHubJoinButton,
   handleHubJoinModalSubmit,
   handleHubDashboardButton,
+  handleHubDramaButton,
+  handleHubDissolveButton,
   isHubButtonId,
   isHubJoinModalId,
   HUB_INVITE_BUTTON_ID,
   HUB_JOIN_BUTTON_ID,
   HUB_DASHBOARD_BUTTON_ID,
+  HUB_DRAMA_BUTTON_ID,
+  HUB_DISSOLVE_BUTTON_ID,
 } = require('./handlers/hub');
+
+// ★ M-6 グループ機能（規約承認 + 解散 Modal）
+const {
+  handleTermsAgree,
+  handleTermsDecline,
+  isTermsButtonId,
+  TERMS_BUTTON_AGREE,
+  TERMS_BUTTON_DECLINE,
+} = require('./handlers/group/join');
+const {
+  handleDissolveModalSubmit,
+  isDissolveModalId,
+} = require('./handlers/group/dissolve');
 
 // ★ アーリーアクセス（Reverb Lab 早期メンバー）
 const { grantAllExisting, setupAutoGrantOnJoin } = require('./handlers/earlyAccess');
@@ -501,6 +518,11 @@ client.on('interactionCreate', async (interaction) => {
       await handleHubJoinModalSubmit(interaction);
       return;
     }
+    // M-6: グループ解散モーダル
+    if (isDissolveModalId(interaction.customId)) {
+      await handleDissolveModalSubmit(interaction);
+      return;
+    }
     return;
   }
 
@@ -530,7 +552,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // ★ つながりハブ：3ボタン（同期招待・コード参加・自分の記録）
+  // ★ つながりハブ：5ボタン（同期招待・コード参加・みんなの状況・声劇・解散）
   if (interaction.customId === HUB_INVITE_BUTTON_ID) {
     await handleHubInviteButton(interaction);
     return;
@@ -541,6 +563,24 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (interaction.customId === HUB_DASHBOARD_BUTTON_ID) {
     await handleHubDashboardButton(interaction);
+    return;
+  }
+  if (interaction.customId === HUB_DRAMA_BUTTON_ID) {
+    await handleHubDramaButton(interaction);
+    return;
+  }
+  if (interaction.customId === HUB_DISSOLVE_BUTTON_ID) {
+    await handleHubDissolveButton(interaction);
+    return;
+  }
+
+  // ★ M-6: グループ専用チャンネル作成の規約承認ボタン
+  if (isTermsButtonId(interaction.customId)) {
+    if (interaction.customId.startsWith(TERMS_BUTTON_AGREE)) {
+      await handleTermsAgree(interaction);
+    } else {
+      await handleTermsDecline(interaction);
+    }
     return;
   }
 

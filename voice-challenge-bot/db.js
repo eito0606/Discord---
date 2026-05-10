@@ -202,6 +202,38 @@ db.exec(`
   );
 
   -- ==========================================
+  -- M-6 グループ機能（2〜10人、ペアを内包）
+  -- ==========================================
+  -- groups は M-6 でペア機能を拡張したもの。
+  -- 旧 pair_invites / pair_relationships は読み取り互換のため残すが、
+  -- 新規発行は groups 経由のみ。
+  CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,                           -- グループ名（任意）
+    owner_user_id TEXT NOT NULL,         -- グループ作成者（解散権限あり）
+    invite_code TEXT NOT NULL UNIQUE,    -- 6桁招待コード（追加メンバー用）
+    invite_expires_at TEXT,              -- コード失効（24h、再生成可能）
+    channel_id TEXT,                     -- 自動作成された専用チャンネル ID（3人以上で生成）
+    max_size INTEGER DEFAULT 10,         -- 上限（今は10固定）
+    created_at TEXT NOT NULL,
+    dissolved_at TEXT                    -- 解散時刻（NULL=活動中）
+  );
+
+  CREATE TABLE IF NOT EXISTS group_members (
+    group_id INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    joined_at TEXT NOT NULL,
+    left_at TEXT,                        -- 個別離脱時刻（NULL=在籍中）
+    PRIMARY KEY (group_id, user_id),
+    FOREIGN KEY (group_id) REFERENCES groups(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_group_members_user
+    ON group_members(user_id, left_at);
+  CREATE INDEX IF NOT EXISTS idx_groups_invite_code
+    ON groups(invite_code);
+
+  -- ==========================================
   -- ぼいフォリオ ログインボーナス（ガチャチケット連携）
   -- ==========================================
   -- bot 側の冪等性ログ。ぼいフォリオ Supabase が canonical だが、
@@ -427,6 +459,146 @@ function getPairsForUser(userId) {
     WHERE user_a_id = ? OR user_b_id = ?
     ORDER BY created_at DESC
   `).all(userId, userId);
+}
+
+// ==========================================
+// M-6 グループ機能（2〜10人）— ペア互換 API
+// ==========================================
+
+// 新規グループ作成（オーナー1人だけのグループ）
+// invite_code 衝突は最大10回までリトライ
+function createGroup(ownerUserId, name = null, ttlHours = 24) {
+  const now = new Date();
+  const expires = new Date(now.getTime() + ttlHours * 60 * 60 * 1000);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const code = generatePairInviteCode();
+    try {
+      const info = db.prepare(`
+        INSERT INTO groups (name, owner_user_id, invite_code, invite_expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(name, ownerUserId, code, expires.toISOString(), now.toISOString());
+      const groupId = info.lastInsertRowid;
+      // オーナーを自動加入
+      db.prepare(`
+        INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)
+      `).run(groupId, ownerUserId, now.toISOString());
+      return { id: groupId, code, expiresAt: expires.toISOString(), name };
+    } catch (err) {
+      if (err.code !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
+    }
+  }
+  throw new Error('グループ作成失敗（招待コード10回衝突）');
+}
+
+function findGroupByInviteCode(code) {
+  return db.prepare(`
+    SELECT * FROM groups
+    WHERE invite_code = ? AND dissolved_at IS NULL
+  `).get(code);
+}
+
+function regenerateGroupInvite(groupId, ttlHours = 24) {
+  const now = new Date();
+  const expires = new Date(now.getTime() + ttlHours * 60 * 60 * 1000);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const code = generatePairInviteCode();
+    try {
+      db.prepare(`
+        UPDATE groups SET invite_code = ?, invite_expires_at = ?
+        WHERE id = ?
+      `).run(code, expires.toISOString(), groupId);
+      return { code, expiresAt: expires.toISOString() };
+    } catch (err) {
+      if (err.code !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
+    }
+  }
+  throw new Error('招待コード再生成失敗');
+}
+
+// グループにメンバー追加（成功時 true、定員超過/重複は false + reason）
+function addGroupMember(groupId, userId) {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ? AND dissolved_at IS NULL').get(groupId);
+  if (!group) return { ok: false, reason: 'not_found' };
+
+  // 在籍中（left_at IS NULL）のメンバー数チェック
+  const activeCount = db.prepare(`
+    SELECT COUNT(*) AS cnt FROM group_members WHERE group_id = ? AND left_at IS NULL
+  `).get(groupId).cnt;
+  if (activeCount >= group.max_size) return { ok: false, reason: 'full' };
+
+  const existing = db.prepare(`
+    SELECT * FROM group_members WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userId);
+
+  const now = new Date().toISOString();
+  if (existing) {
+    if (!existing.left_at) return { ok: false, reason: 'already_member' };
+    // 再加入（left_at をクリア）
+    db.prepare(`
+      UPDATE group_members SET left_at = NULL, joined_at = ?
+      WHERE group_id = ? AND user_id = ?
+    `).run(now, groupId, userId);
+  } else {
+    db.prepare(`
+      INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)
+    `).run(groupId, userId, now);
+  }
+
+  const newCount = activeCount + 1;
+  return { ok: true, group, memberCount: newCount };
+}
+
+// 個別離脱
+function leaveGroup(groupId, userId) {
+  const now = new Date().toISOString();
+  const info = db.prepare(`
+    UPDATE group_members SET left_at = ?
+    WHERE group_id = ? AND user_id = ? AND left_at IS NULL
+  `).run(now, groupId, userId);
+  return info.changes > 0;
+}
+
+// グループ解散（オーナーのみ。チャンネル削除は呼び出し側で行う）
+function dissolveGroup(groupId, requesterUserId) {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ? AND dissolved_at IS NULL').get(groupId);
+  if (!group) return { ok: false, reason: 'not_found' };
+  if (group.owner_user_id !== requesterUserId) return { ok: false, reason: 'not_owner' };
+
+  const now = new Date().toISOString();
+  db.prepare('UPDATE groups SET dissolved_at = ? WHERE id = ?').run(now, groupId);
+  db.prepare(`
+    UPDATE group_members SET left_at = ?
+    WHERE group_id = ? AND left_at IS NULL
+  `).run(now, groupId);
+  return { ok: true, group };
+}
+
+// グループにチャンネルIDを紐づけ
+function setGroupChannelId(groupId, channelId) {
+  db.prepare('UPDATE groups SET channel_id = ? WHERE id = ?').run(channelId, groupId);
+}
+
+// 在籍中メンバー一覧
+function getGroupMembers(groupId) {
+  return db.prepare(`
+    SELECT * FROM group_members
+    WHERE group_id = ? AND left_at IS NULL
+    ORDER BY joined_at ASC
+  `).all(groupId);
+}
+
+// ユーザーが所属している活動中グループ一覧
+function getGroupsForUser(userId) {
+  return db.prepare(`
+    SELECT g.* FROM groups g
+    JOIN group_members m ON m.group_id = g.id
+    WHERE m.user_id = ? AND m.left_at IS NULL AND g.dissolved_at IS NULL
+    ORDER BY g.created_at DESC
+  `).all(userId);
+}
+
+function getGroupById(groupId) {
+  return db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId);
 }
 
 // ==========================================
@@ -898,4 +1070,15 @@ module.exports = {
   getActiveUserIdsSince,
   getTopParticipantsSince,
   countParticipationSince,
+  // --- M-6 グループ機能 ---
+  createGroup,
+  findGroupByInviteCode,
+  regenerateGroupInvite,
+  addGroupMember,
+  leaveGroup,
+  dissolveGroup,
+  setGroupChannelId,
+  getGroupMembers,
+  getGroupsForUser,
+  getGroupById,
 };
