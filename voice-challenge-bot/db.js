@@ -92,6 +92,11 @@ db.exec(`
     characters TEXT NOT NULL,            -- JSON文字列: [{name, gender, emoji}] — 登場人物リスト
     reminder_sent_1h INTEGER DEFAULT 0,  -- 1時間前リマインド送信済みフラグ（0=未送信, 1=送信済み）
     reminder_sent_10m INTEGER DEFAULT 0, -- 10分前リマインド送信済みフラグ
+    -- M-6 Phase 2-C: 'performance'（本番）/ 'practice'（練習回、リマインド省略）
+    event_kind TEXT DEFAULT 'performance',
+    -- M-6 Phase 3-D: X / Discord Stage 配信の許可状況（JSON配列で許可済キャストID保存）
+    broadcast_consents TEXT,
+    broadcast_status TEXT DEFAULT 'not_requested', -- not_requested / pending / consented / broadcasting / done
     created_at TEXT NOT NULL
   );
 
@@ -303,6 +308,31 @@ function migrateReverbUpdatesSchema() {
 }
 
 migrateReverbUpdatesSchema();
+
+// ==========================================
+// M-6 voice_drama_events への event_kind / broadcast_* カラム追加マイグレーション
+// 既存行は event_kind='performance' で本番扱い（既存挙動を維持）
+// ==========================================
+function migrateVoiceDramaEventsSchema() {
+  const cols = db.prepare("PRAGMA table_info(voice_drama_events)").all().map((c) => c.name);
+  const wanted = [
+    { name: 'event_kind', def: "TEXT DEFAULT 'performance'" },
+    { name: 'broadcast_consents', def: 'TEXT' },
+    { name: 'broadcast_status', def: "TEXT DEFAULT 'not_requested'" },
+  ];
+  for (const w of wanted) {
+    if (!cols.includes(w.name)) {
+      try {
+        db.exec(`ALTER TABLE voice_drama_events ADD COLUMN ${w.name} ${w.def}`);
+        console.log(`[DB Migration] voice_drama_events に ${w.name} カラムを追加しました`);
+      } catch (err) {
+        console.error(`[DB Migration] ${w.name} の追加に失敗:`, err.message);
+      }
+    }
+  }
+}
+
+migrateVoiceDramaEventsSchema();
 
 // ==========================================
 // 2. データベースを操作するための便利な関数を用意
@@ -718,8 +748,8 @@ function createVoiceDramaEvent(data) {
   const now = new Date().toISOString();
   const result = db.prepare(`
     INSERT INTO voice_drama_events
-    (host_user_id, recruit_channel_id, stage_channel_id, event_title, event_datetime, characters, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    (host_user_id, recruit_channel_id, stage_channel_id, event_title, event_datetime, characters, event_kind, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     data.hostUserId,
     data.recruitChannelId,
@@ -727,6 +757,7 @@ function createVoiceDramaEvent(data) {
     data.eventTitle || '声劇イベント',
     data.eventDatetime,
     JSON.stringify(data.characters), // 配列をJSON文字列に変換して保存（本棚に本を詰めるイメージ）
+    data.eventKind || 'performance',
     now
   );
   return { id: result.lastInsertRowid, ...data, created_at: now };

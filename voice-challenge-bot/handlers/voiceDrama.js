@@ -32,6 +32,12 @@ const { scheduleReminders } = require('./voiceDramaReminder');
 // アーカイブ機能を読み込む
 const { archiveEvent } = require('./voiceDramaArchive');
 
+// M-6 Phase 3-D: 配信許可フロー
+const {
+  offerBroadcastRequest,
+  requestBroadcastConsents,
+} = require('./voiceDramaBroadcast');
+
 // ==========================================
 // 定数
 // ==========================================
@@ -218,6 +224,34 @@ async function collectCharacters(thread, user, client) {
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `📋 **登場人物一覧**\n${characterList}\n` +
     `━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `次に、これは **本番回 / 練習回** どちらですか？\n` +
+    `（練習回はリマインドが省略されます）`
+  );
+
+  // M-6 Phase 2-C: 本番/練習回 選択
+  let eventKind = 'performance';
+  try {
+    const kindRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('vd_kind_perf').setLabel('🎭 本番回').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('vd_kind_pract').setLabel('🧪 練習回').setStyle(ButtonStyle.Secondary),
+    );
+    const kindMsg = await thread.send({ components: [kindRow] });
+    const kindInteraction = await kindMsg.awaitMessageComponent({
+      filter: (i) => i.user.id === user.id,
+      time: INPUT_TIMEOUT_MS,
+    });
+    eventKind = kindInteraction.customId === 'vd_kind_pract' ? 'practice' : 'performance';
+    await kindInteraction.update({
+      content: eventKind === 'practice' ? '🧪 練習回として記録します。' : '🎭 本番回として記録します。',
+      components: [],
+    });
+  } catch (err) {
+    await thread.send('⏰ タイムアウトしました。');
+    await thread.setArchived(true);
+    return;
+  }
+
+  await thread.send(
     `次に、**イベント名（台本名）**を入力してください。\n` +
     `（例: \`ロミオとジュリエット\`）`
   );
@@ -332,6 +366,7 @@ async function collectCharacters(thread, user, client) {
     // DBにイベントを保存
     const event = createVoiceDramaEvent({
       hostUserId: user.id,
+      eventKind,
       recruitChannelId: channelId,
       stageChannelId: stageChannelId,
       eventTitle: eventTitle,
@@ -348,9 +383,19 @@ async function collectCharacters(thread, user, client) {
     await thread.send(
       `✅ **募集を開始しました！**\n\n` +
       `募集Embedが <#${channelId}> に投稿されました。\n` +
-      `参加者が集まったら、募集Embedの「✅ 確定する」ボタンを押してください。\n\n` +
-      `このスレッドは自動的にアーカイブされます。📁`
+      `参加者が集まったら、募集Embedの「✅ 確定する」ボタンを押してください。`
     );
+
+    // M-6 Phase 3-D: 本番回のみ、X 配信オプションを提示（練習回はスキップ）
+    if (eventKind === 'performance') {
+      try {
+        await offerBroadcastRequest(thread, event.id);
+      } catch (err) {
+        console.warn('[Drama] 配信オファー失敗:', err.message);
+      }
+    }
+
+    await thread.send(`このスレッドは自動的にアーカイブされます。📁`);
     await thread.setArchived(true);
 
   } catch (error) {
@@ -754,17 +799,143 @@ async function handleCancel(interaction, eventId) {
     return;
   }
 
-  updateVoiceDramaEventStatus(eventId, 'archived');
+  // M-6 Phase 2-A: キャンセルポリシー
+  // 開演まで 24h 以上 → 通常キャンセル（理由任意）
+  // 24h 以内 → 緊急キャンセル扱い、Modal で理由必須 + 運営ログにも通知
+  const eventTime = new Date(event.event_datetime).getTime();
+  const hoursUntil = (eventTime - Date.now()) / (60 * 60 * 1000);
 
-  await interaction.update({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle('🎭 声劇イベント — キャンセル済み')
-        .setDescription(`📖 **${event.event_title}** は主催者によりキャンセルされました。`)
-        .setColor(0x808080)
-    ],
-    components: [],
+  if (hoursUntil < 24 && hoursUntil > 0) {
+    // 当日キャンセル → 緊急 Modal
+    const modal = new (require('discord.js').ModalBuilder)()
+      .setCustomId(`vd_emergency_cancel_${eventId}`)
+      .setTitle('⚠️ 当日キャンセル（緊急）');
+    const reasonInput = new (require('discord.js').TextInputBuilder)()
+      .setCustomId('cancel_reason')
+      .setLabel('キャンセル理由（30文字以上、全員に通知されます）')
+      .setStyle(require('discord.js').TextInputStyle.Paragraph)
+      .setMinLength(30)
+      .setMaxLength(500)
+      .setRequired(true)
+      .setPlaceholder('例: 体調不良で主催者が出演不可となりました。代替日を後日調整します。');
+    const row = new ActionRowBuilder().addComponents(reasonInput);
+    modal.addComponents(row);
+    try {
+      await interaction.showModal(modal);
+    } catch (err) {
+      console.error('[Drama] 緊急キャンセル Modal 失敗:', err);
+      await interaction.reply({ content: '❌ Modal 表示に失敗しました。', ephemeral: true }).catch(() => {});
+    }
+    return;
+  }
+
+  // 通常キャンセル（前日まで） → 全員 DM + 募集 Embed をキャンセル表示に
+  await interaction.deferReply({ ephemeral: true });
+  await executeCancellation(interaction.client, event, null, false);
+  await interaction.editReply({
+    content: '🛑 キャンセルしました。立候補者全員に DM 通知を送りました。',
   });
+}
+
+/**
+ * 当日緊急キャンセルの Modal Submit ハンドラ
+ * 理由必須・運営ログにも通知
+ */
+async function handleEmergencyCancelModal(interaction) {
+  const eventId = parseInt(interaction.customId.replace('vd_emergency_cancel_', ''), 10);
+  const reason = interaction.fields.getTextInputValue('cancel_reason')?.trim() || '';
+  const event = getVoiceDramaEvent(eventId);
+  if (!event) {
+    await interaction.reply({ content: '❌ イベントが見つかりません。', ephemeral: true });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  await executeCancellation(interaction.client, event, reason, true);
+  await interaction.editReply({
+    content: '⚠️ 緊急キャンセルを実行しました。全員 DM + 運営ログにも通知済みです。',
+  });
+}
+
+function isEmergencyCancelModalId(customId) {
+  return typeof customId === 'string' && customId.startsWith('vd_emergency_cancel_');
+}
+
+/**
+ * キャンセル実処理（通常 / 緊急 共通）
+ * @param client Discord Client
+ * @param event イベントデータ
+ * @param reason 理由文（null = 通常キャンセル、文字列 = 緊急）
+ * @param isEmergency 緊急フラグ
+ */
+async function executeCancellation(client, event, reason, isEmergency) {
+  const eventId = event.id;
+  updateVoiceDramaEventStatus(eventId, 'cancelled');
+
+  // 募集 Embed をキャンセル表示に
+  try {
+    const ch = await client.channels.fetch(event.recruit_channel_id);
+    if (ch && event.recruit_message_id) {
+      const msg = await ch.messages.fetch(event.recruit_message_id).catch(() => null);
+      if (msg) {
+        await msg.edit({
+          embeds: [new EmbedBuilder()
+            .setTitle(isEmergency ? '🎭 声劇イベント — ⚠️ 当日緊急キャンセル' : '🎭 声劇イベント — キャンセル済み')
+            .setDescription([
+              `📖 **${event.event_title}** はキャンセルされました。`,
+              reason ? `\n**理由**: ${reason}` : '',
+            ].filter(Boolean).join('\n'))
+            .setColor(isEmergency ? 0xC0392B : 0x808080)],
+          components: [],
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[Drama] 募集 Embed 更新失敗:', err.message);
+  }
+
+  // 立候補者・確定済み全員に DM
+  const participants = getVoiceDramaParticipants(eventId);
+  const uniqueIds = [...new Set(participants.map((p) => p.user_id))];
+  const dmEmbed = new EmbedBuilder()
+    .setColor(isEmergency ? 0xC0392B : 0x808080)
+    .setTitle(isEmergency ? '⚠️ 声劇イベント 緊急キャンセルのお知らせ' : '🛑 声劇イベント キャンセルのお知らせ')
+    .setDescription([
+      `📖 **${event.event_title}**`,
+      '',
+      isEmergency ? '当日のキャンセルとなり、申し訳ありません。' : 'イベントがキャンセルになりました。',
+      reason ? `\n**主催者からのメッセージ**\n${reason}` : '',
+    ].filter(Boolean).join('\n'))
+    .setFooter({ text: 'Reverb Lab｜声劇' });
+
+  for (const uid of uniqueIds) {
+    try {
+      const u = await client.users.fetch(uid);
+      await u.send({ embeds: [dmEmbed] });
+    } catch (err) { /* ignore */ }
+  }
+
+  // 緊急時は運営ログにも投稿
+  if (isEmergency && process.env.OPS_LOG_CHANNEL_ID) {
+    try {
+      const opsCh = await client.channels.fetch(process.env.OPS_LOG_CHANNEL_ID);
+      await opsCh.send({
+        embeds: [new EmbedBuilder()
+          .setColor(0xC0392B)
+          .setTitle('⚠️ 声劇 当日緊急キャンセル発生')
+          .addFields(
+            { name: 'イベントID', value: String(eventId), inline: true },
+            { name: '主催者', value: `<@${event.host_user_id}>`, inline: true },
+            { name: 'タイトル', value: event.event_title, inline: false },
+            { name: '開演予定', value: new Date(event.event_datetime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }), inline: false },
+            { name: '参加者数', value: String(uniqueIds.length), inline: true },
+            { name: '理由', value: reason.slice(0, 800), inline: false },
+          )
+          .setTimestamp()],
+      });
+    } catch (err) {
+      console.warn('[Drama] 運営ログ通知失敗:', err.message);
+    }
+  }
 }
 
 // ────── アーカイブボタンの処理 ──────
@@ -977,6 +1148,50 @@ async function announceRoles(client, event) {
   } catch (error) {
     console.error('募集Embed更新エラー:', error);
   }
+
+  // M-6 Phase 3-D: 配信許可フローを起動（broadcast_status='pending' の場合のみ）
+  try {
+    const freshEvent = getVoiceDramaEvent(event.id);
+    if (freshEvent && freshEvent.broadcast_status === 'pending') {
+      await requestBroadcastConsents(client, freshEvent);
+    }
+  } catch (err) {
+    console.warn('[Drama] 配信同意 DM 失敗:', err.message);
+  }
+
+  // M-6 Phase 2-B: 確定キャストへ「🙇 辞退する」ボタンを DM 送付（自己コントロール手段）
+  try {
+    const { DECLINE_BUTTON_PREFIX } = require('./voiceDramaDecline');
+    const declineRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${DECLINE_BUTTON_PREFIX}${event.id}`)
+        .setLabel('辞退する（やむを得ない場合）')
+        .setEmoji('🙇')
+        .setStyle(ButtonStyle.Secondary),
+    );
+    for (const p of confirmed) {
+      try {
+        const u = await client.users.fetch(p.user_id);
+        await u.send({
+          embeds: [new EmbedBuilder()
+            .setColor(0x16A085)
+            .setTitle(`🎉 配役確定：${p.character_name} 役`)
+            .setDescription([
+              `📖 **${event.eventTitle || event.event_title}**`,
+              '',
+              'おめでとうございます！配役が確定しました。',
+              '',
+              '万が一、急用や体調不良で出演できなくなった場合は、',
+              '下の「🙇 辞退する」ボタンから連絡してください。',
+              '主催者が代役を探します。',
+            ].join('\n'))],
+          components: [declineRow],
+        });
+      } catch (err) { /* DM closed: skip */ }
+    }
+  } catch (err) {
+    console.warn('[Drama] 辞退ボタン DM 失敗:', err.message);
+  }
 }
 
 // ==========================================
@@ -989,4 +1204,7 @@ module.exports = {
   handleVoiceDramaSelectMenu,
   handleReactionAdd,
   handleReactionRemove,
+  // M-6 Phase 2
+  handleEmergencyCancelModal,
+  isEmergencyCancelModalId,
 };

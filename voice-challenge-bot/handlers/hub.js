@@ -112,9 +112,16 @@ async function setupHubMessage(channel) {
         .setEmoji('🚪')
         .setStyle(ButtonStyle.Danger);
 
-    // Discord は 1 行に 5 ボタンまで → 主要 4 + 危険 1 を 2 行に分割
+    const { LIST_BUTTON_ID } = require('./voiceDramaList');
+    const dramaListBtn = new ButtonBuilder()
+        .setCustomId(LIST_BUTTON_ID)
+        .setLabel('直近の声劇')
+        .setEmoji('📋')
+        .setStyle(ButtonStyle.Secondary);
+
+    // Discord は 1 行に 5 ボタンまで → 主要 4 + 一覧/解散 を 2 行に
     const row1 = new ActionRowBuilder().addComponents(inviteBtn, joinBtn, dashboardBtn, dramaBtn);
-    const row2 = new ActionRowBuilder().addComponents(dissolveBtn);
+    const row2 = new ActionRowBuilder().addComponents(dramaListBtn, dissolveBtn);
 
     const message = await channel.send({ embeds: [embed], components: [row1, row2] });
     console.log(`[Hub] ハブメッセージを設置: ${channel.id}`);

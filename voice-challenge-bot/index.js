@@ -46,7 +46,31 @@ const { handleAiChatButton, setupAiChatMessage } = require('./handlers/aiChat');
 const { handleVoicePractice } = require('./handlers/voicePracticeHandler');
 
 // ★ 新規追加: 声劇イベント機能を読み込む
-const { handleVoiceDramaTrigger, handleVoiceDramaButton, handleVoiceDramaSelectMenu, handleReactionAdd, handleReactionRemove } = require('./handlers/voiceDrama');
+const { handleVoiceDramaTrigger, handleVoiceDramaButton, handleVoiceDramaSelectMenu, handleReactionAdd, handleReactionRemove, handleEmergencyCancelModal, isEmergencyCancelModalId } = require('./handlers/voiceDrama');
+
+// M-6 Phase 2-B: 辞退・代役募集
+const {
+  handleDeclineButton,
+  handleDeclineModalSubmit,
+  handleSeekSubstituteButton,
+  isDeclineButtonId,
+  isDeclineModalId,
+  isSeekSubstituteButtonId,
+} = require('./handlers/voiceDramaDecline');
+
+// M-6 Phase 2-D: 声劇一覧ボタン
+const {
+  handleListButton: handleDramaListButton,
+  isListButtonId: isDramaListButtonId,
+} = require('./handlers/voiceDramaList');
+
+// M-6 Phase 3-D: X 配信許可フロー
+const {
+  handleBroadcastRequest,
+  handleConsentButton,
+  isBroadcastRequestButtonId,
+  isBroadcastConsentButtonId,
+} = require('./handlers/voiceDramaBroadcast');
 const { restoreReminders } = require('./handlers/voiceDramaReminder');
 
 // ★ 新規追加: 自己紹介・ボイスサンプル・日記リアクション
@@ -523,6 +547,16 @@ client.on('interactionCreate', async (interaction) => {
       await handleDissolveModalSubmit(interaction);
       return;
     }
+    // M-6 Phase 2-A: 声劇 当日緊急キャンセル モーダル
+    if (isEmergencyCancelModalId(interaction.customId)) {
+      await handleEmergencyCancelModal(interaction);
+      return;
+    }
+    // M-6 Phase 2-B: 辞退理由モーダル
+    if (isDeclineModalId(interaction.customId)) {
+      await handleDeclineModalSubmit(interaction);
+      return;
+    }
     return;
   }
 
@@ -581,6 +615,32 @@ client.on('interactionCreate', async (interaction) => {
     } else {
       await handleTermsDecline(interaction);
     }
+    return;
+  }
+
+  // ★ M-6 Phase 2-B: 辞退ボタン / 代役募集ボタン
+  if (isDeclineButtonId(interaction.customId)) {
+    await handleDeclineButton(interaction);
+    return;
+  }
+  if (isSeekSubstituteButtonId(interaction.customId)) {
+    await handleSeekSubstituteButton(interaction);
+    return;
+  }
+
+  // ★ M-6 Phase 2-D: 声劇一覧ボタン
+  if (isDramaListButtonId(interaction.customId)) {
+    await handleDramaListButton(interaction);
+    return;
+  }
+
+  // ★ M-6 Phase 3-D: X 配信オファー / 同意ボタン
+  if (isBroadcastRequestButtonId(interaction.customId)) {
+    await handleBroadcastRequest(interaction);
+    return;
+  }
+  if (isBroadcastConsentButtonId(interaction.customId)) {
+    await handleConsentButton(interaction);
     return;
   }
 

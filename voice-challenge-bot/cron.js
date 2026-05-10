@@ -19,6 +19,9 @@ const { postMonthlyTheme } = require('./handlers/creator/events');
 // ★ M-5 ぼいラボ週次レポート：毎週月曜 9:00
 const { postWeeklyReport } = require('./handlers/voipoke/weekly-report');
 
+// ★ M-6 Phase 3-C 励まし通知：毎晩 22:00
+const { runEncouragementCheck } = require('./handlers/encouragementNotifier');
+
 // cronの書式: '分 時 日 月 曜日'
 // 設定例:
 // '0 18 * * *' → 毎日18時00分に実行
@@ -94,7 +97,20 @@ function setupCron(client) {
         timezone: 'Asia/Tokyo'
     });
 
-    console.log('📅 定期実行（18時お題／日曜22時ベスト／毎時ニュース／21時 Reverb／月初10時 クリエイター／月曜9時 M-5週次）のスケジュールがセットされました！');
+    // アラームの設定⑦: M-6 Phase 3-C 励まし通知（毎晩 22:00 JST）
+    // 連続日数が5日以上 × 今日まだ未投稿 のユーザー本人 + グループ仲間に通知
+    cron.schedule('0 22 * * *', async () => {
+        console.log('⏰ 22 時になりました。励まし通知を実行します...');
+        try {
+            await runEncouragementCheck(client);
+        } catch (err) {
+            console.error('[M-6] encouragement error:', err);
+        }
+    }, {
+        timezone: 'Asia/Tokyo'
+    });
+
+    console.log('📅 定期実行（18時お題／日曜22時ベスト／毎時ニュース／21時 Reverb／月初10時 クリエイター／月曜9時 M-5週次／毎晩22時 M-6励まし）のスケジュールがセットされました！');
 }
 
 // 他のファイルから「setupCron」という関数を使えるようにする
