@@ -11,6 +11,7 @@ const {
     getGroupById,
     setGroupChannelId,
 } = require('../../db');
+const voilogSync = require('../../lib/voilogSync');
 
 const TERMS_BUTTON_AGREE = 'group_terms_agree:';
 const TERMS_BUTTON_DECLINE = 'group_terms_decline:';
@@ -43,6 +44,12 @@ async function processGroupJoin(joiner, rawCode, client, channel = null) {
         if (result.reason === 'already_member') return { ok: false, message: 'ℹ️ あなたはすでにこのグループの仲間です。' };
         return { ok: false, message: '❌ 参加処理に失敗しました。' };
     }
+
+    // VoiLog Supabase ミラー（失敗時はログのみ）
+    voilogSync.mirrorGroupJoin({
+        discordGroupId: group.id,
+        discordUserId: joiner.id,
+    }).catch(() => {});
 
     const members = getGroupMembers(group.id);
     const memberCount = members.length;
@@ -218,6 +225,11 @@ async function handleTermsAgree(interaction) {
         });
 
         setGroupChannelId(groupId, channel.id);
+        // VoiLog Supabase に channel_id も反映（失敗時はログのみ）
+        voilogSync.mirrorChannelLink({
+            discordGroupId: groupId,
+            channelId: channel.id,
+        }).catch(() => {});
 
         await channel.send({
             embeds: [new EmbedBuilder()

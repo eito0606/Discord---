@@ -17,6 +17,8 @@ const { handleRoleSync } = require('./role-sync');
 const { handleNewVoice } = require('./new-voice-poster');
 // Reverb ニュース受信ハンドラ（独立モジュール、VoiPoke 機能には触れない）
 const { handleReverbUpdate } = require('../reverb/webhook-handler');
+// VoiLog ブリッジ（双方向グループ同期、追加機能・既存挙動には影響なし）
+const { registerVoilogBridgeRoutes } = require('../group/voilog-bridge-api');
 
 /**
  * Reverb 専用の署名検証
@@ -52,6 +54,7 @@ function startWebhookServer(client) {
   app.use((req, res, next) => {
     if (req.path === '/healthz') return next();
     if (req.path.startsWith('/reverb/')) return next(); // Reverb は専用ミドルウェアで認証
+    if (req.path.startsWith('/voilog/')) return next(); // VoiLog ブリッジは専用ミドルウェアで認証
     const signature = req.headers['x-webhook-secret'];
     if (!verifyWebhookSignature(signature)) {
       console.warn(`[VoiPoke] Rejected request from ${req.ip} to ${req.path} (invalid signature)`);
@@ -130,6 +133,11 @@ function startWebhookServer(client) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ----- VoiLog ブリッジルート -----
+  // POST /voilog/group-create, /group-join, /group-leave, /group-dissolve
+  // 認証は X-Voilab-Bridge-Secret (registerVoilogBridgeRoutes 内で検証)
+  registerVoilogBridgeRoutes(app);
 
   // ----- 共通エラーハンドラ -----
   // 想定外の例外を握り潰さず JSON で返す

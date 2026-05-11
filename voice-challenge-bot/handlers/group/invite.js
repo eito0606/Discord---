@@ -10,6 +10,7 @@ const {
     regenerateGroupInvite,
     getGroupsForUser,
 } = require('../../db');
+const voilogSync = require('../../lib/voilogSync');
 
 /**
  * グループ招待コードを発行（必要ならグループ作成）し、本人に DM 送信
@@ -29,6 +30,13 @@ async function createGroupInviteAndDM(user) {
             code = created.code;
             expiresAt = created.expiresAt;
             isNew = true;
+            // VoiLog Supabase に非同期でミラー（失敗時はログのみ、Bot は止めない）
+            voilogSync.mirrorGroupCreate({
+                discordGroupId: created.id,
+                ownerDiscordId: user.id,
+                name: created.name,
+                inviteCode: created.code,
+            }).catch(() => {});
         } else {
             group = existing[0];
             const regen = regenerateGroupInvite(group.id, 24);

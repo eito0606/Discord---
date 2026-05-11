@@ -262,6 +262,28 @@ db.exec(`
 `);
 
 // ==========================================
+// マイグレーション: groups.voilog_group_id を後付け（VoiLog 連携用）
+// 既に存在すればスキップする冪等処理。Bot 既存挙動は変更しない。
+// ==========================================
+function _addColumnIfNotExistsForVoilog(table, column, type) {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+    const has = cols.some((c) => c.name === column);
+    if (!has) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      console.log(`[db migration] added ${table}.${column}`);
+    }
+  } catch (e) {
+    console.warn(`[db migration] ${table}.${column}:`, e.message);
+  }
+}
+_addColumnIfNotExistsForVoilog('groups', 'voilog_group_id', 'TEXT');
+_addColumnIfNotExistsForVoilog('groups', 'voilog_synced_at', 'TEXT');
+try {
+  db.exec('CREATE INDEX IF NOT EXISTS idx_groups_voilog_id ON groups(voilog_group_id)');
+} catch (e) { /* ignore */ }
+
+// ==========================================
 // 既存テーブルへのカラム追加マイグレーション
 // 既に動いている daily_posts に対し、台本ループ修正用の
 // (category, genre, situation_id, situation_title, emotion_tag) を追加する。

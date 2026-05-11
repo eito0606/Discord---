@@ -17,6 +17,7 @@ const {
     getGroupMembers,
     dissolveGroup,
 } = require('../../db');
+const voilogSync = require('../../lib/voilogSync');
 
 const DISSOLVE_OPEN_BUTTON = 'group_dissolve_open';
 const DISSOLVE_MODAL_PREFIX = 'group_dissolve_modal:';
@@ -104,6 +105,11 @@ async function handleDissolveModalSubmit(interaction) {
         await interaction.editReply({ content: '❌ 解散処理に失敗しました。' });
         return;
     }
+
+    // VoiLog Supabase ミラー（失敗時はログのみ）
+    voilogSync.mirrorGroupDissolve({
+        discordGroupId: groupId,
+    }).catch(() => {});
 
     // 専用チャンネルの削除
     if (group.channel_id) {
