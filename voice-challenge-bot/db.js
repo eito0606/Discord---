@@ -630,6 +630,15 @@ function setGroupChannelId(groupId, channelId) {
   db.prepare('UPDATE groups SET channel_id = ? WHERE id = ?').run(channelId, groupId);
 }
 
+// VoiLog Supabase の group UUID を Bot SQLite に書き戻し
+function updateVoilogGroupId(discordGroupId, voilogGroupId) {
+  db.prepare(`
+    UPDATE groups
+    SET voilog_group_id = ?, voilog_synced_at = ?
+    WHERE id = ?
+  `).run(voilogGroupId, new Date().toISOString(), discordGroupId);
+}
+
 // 在籍中メンバー一覧
 function getGroupMembers(groupId) {
   return db.prepare(`
@@ -1131,6 +1140,7 @@ module.exports = {
   leaveGroup,
   dissolveGroup,
   setGroupChannelId,
+  updateVoilogGroupId,
   getGroupMembers,
   getGroupsForUser,
   getGroupById,

@@ -8,7 +8,7 @@
 //
 // 依存: Node 18+ の built-in fetch（追加 npm パッケージ不要）。
 
-const { getCachedLink } = require('../db');
+const { getCachedLink, updateVoilogGroupId } = require('../db');
 
 const VOILOG_SUPABASE_URL = process.env.VOILOG_SUPABASE_URL || '';
 const VOILOG_SUPABASE_SERVICE_ROLE_KEY = process.env.VOILOG_SUPABASE_SERVICE_ROLE_KEY || '';
@@ -118,6 +118,12 @@ async function mirrorGroupCreate(payload) {
         }],
         prefer: 'resolution=ignore-duplicates',
       });
+      // Bot SQLite に VoiLog group UUID を書き戻し
+      try {
+        updateVoilogGroupId(payload.discordGroupId, voilogGroup.id);
+      } catch (err) {
+        console.warn('[voilog-sync] SQLite write-back failed:', err.message);
+      }
     }
     console.log(`[voilog-sync] mirrored group ${payload.discordGroupId} -> ${voilogGroup?.id}`);
   } catch (err) {
